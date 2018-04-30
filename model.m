@@ -53,16 +53,16 @@ third = [cos(yaw) -sin(yaw) 0;
 matrix = third * second * first;
 global world_to_robot robot_to_weapon wep_front_transform wep_back_transform
 world_to_robot = [[matrix;0,0,0],[x;y;z;1]];
-robot_to_weapon = [[transform(0,pi/2,0);0,0,0],[weapon_offset;0;0;1]];
+robot_to_weapon = [[transform(pi/2,0,0);0,0,0],[weapon_offset;0;0;1]];
 
 
 weapon_spin = [cos(weapon_location) -sin(weapon_location) 0;
     sin(weapon_location) cos(weapon_location) 0
     0 0 1];
 
-weapon_to_front_tip = [[weapon_spin;0,0,0],[weapon_radius;0;0;1]];
+weapon_to_front_tip = [[weapon_spin;0,0,0],[0;0;0;1]] * [[eye(3);0,0,0],[weapon_radius;0;0;1]];
 wep_front_transform = world_to_robot * robot_to_weapon * weapon_to_front_tip;
-weapon_to_back_tip = [[weapon_spin;0,0,0],[-weapon_radius;0;0;1]];
+weapon_to_back_tip = [[weapon_spin;0,0,0],[0;0;0;1]] * [[eye(3);0,0,0],[-weapon_radius;0;0;1]];
 wep_back_transform = world_to_robot * robot_to_weapon * weapon_to_back_tip;
 
 global jacob_weapon_front
@@ -73,7 +73,7 @@ jacob_weapon_back = jacobian(wep_back_transform * [0;0;0;1], state) ;
 
 jacob_chassis = jacobian(world_to_robot * [0;-0;0;1], state);
 
-state_pos = [1,0,wheel_radius, 0,0,0,  pi/2];
+state_pos = [1,0,wheel_radius, 0,0,0,   pi/2];
 state_vel = [0,0,0, 0,0,0,  0];
 t = 5;
 
@@ -93,12 +93,35 @@ Lagrange_dstate_dot = jacobian(Lagrange,state_dot);
 torque = diff(subs(Lagrange_dstate_dot,[state,state_dot],[state_t,diff(state_t,t)])) -...
               subs(Lagrange_dstate,[state,state_dot],[state_t,diff(state_t,t)]);
 torque = subs(torque,diff(diff(state_t,t),t),state_ddot);
-torque = simplify(subs(torque,[state_t,diff(state_t,t)],[state,state_dot]))
+torque = transpose(simplify(subs(torque,[state_t,diff(state_t,t)],[state,state_dot])));
+
+M = [
+simplify(torque - subs(torque,state_ddot(1),0)),...
+simplify(torque - subs(torque,state_ddot(2),0)),...
+simplify(torque - subs(torque,state_ddot(3),0)),...
+simplify(torque - subs(torque,state_ddot(4),0)),...
+simplify(torque - subs(torque,state_ddot(5),0)),...
+simplify(torque - subs(torque,state_ddot(6),0)),...
+simplify(torque - subs(torque,state_ddot(7),0))];
+
+M = subs(M,state_ddot,[1,1,1,1,1,1,1])
+
+C = [
+simplify(torque - subs(torque,state_dot(1),0)),...
+simplify(torque - subs(torque,state_dot(2),0)),...
+simplify(torque - subs(torque,state_dot(3),0)),...
+simplify(torque - subs(torque,state_dot(4),0)),...
+simplify(torque - subs(torque,state_dot(5),0)),...
+simplify(torque - subs(torque,state_dot(6),0)),...
+simplify(torque - subs(torque,state_dot(7),0))];
+
+C = subs(C,state_dot,[1,1,1,1,1,1,1])
+
+G = subs(torque,[state_dot,state_ddot],[0,0,0,0,0,0,0, 0,0,0,0,0,0,0])
 
 
 
-
-BattleBotODE(t,[state_pos,state_vel])
+%BattleBotODE(t,[state_pos,state_vel])
 
 
 
@@ -124,12 +147,6 @@ wheel_points = subs(world_to_robot * transpose([left_wheel;right_wheel]),state,s
 
 %visualize([state_pos,state_vel]);
 
-
-% g = 9.81;
-% k = .5 * (weapon_mass * sum( velocity_weapon(1:3).^ 2) ...
-%     + chassis_mass * sum( jacob_chassis(1:3).^ 2)...
-%     + Moment_fly * weapon_vel * weapon_vel);
-% p = wep_transform(2,4) * weapon_mass * g + world_to_robot(2,4) * chassis_mass * g;
 
 %% Definging Functions
 
