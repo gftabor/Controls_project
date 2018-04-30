@@ -1,6 +1,7 @@
 %%variables
 
 clc
+close all
 clear
 syms x y z roll pitch yaw
 
@@ -10,7 +11,7 @@ syms weapon_location
 
 
 
-
+tic
 %weapon_vel = diff(weapon_location,t);
 
 global state state_dot state_ddot
@@ -82,11 +83,13 @@ t = 5;
 [k2,p2] = Dynamics(jacob_weapon_front,wep_front_transform,weapon_mass/2,state_dot);
 [k3,p3] = Dynamics(jacob_weapon_back,wep_back_transform,weapon_mass/2,state_dot);
 
-Lagrange = simplify(k1 + k2 + k3 - p1 -p2 - p3)
+disp('After energy')
+toc
+
+Lagrange = simplify(k1 + k2 + k3 - p1 -p2 - p3);
 
 syms x_t(t) y_t(t) z_t(t) roll_t(t) pitch_t(t) yaw_t(t) weapon_location_t(t)
 state_t = [x_t(t) y_t(t) z_t(t) roll_t(t) pitch_t(t) yaw_t(t) weapon_location_t(t)];
-syms 
 Lagrange_dstate = jacobian(Lagrange,state);
 Lagrange_dstate_dot = jacobian(Lagrange,state_dot);
 
@@ -94,7 +97,8 @@ torque = diff(subs(Lagrange_dstate_dot,[state,state_dot],[state_t,diff(state_t,t
               subs(Lagrange_dstate,[state,state_dot],[state_t,diff(state_t,t)]);
 torque = subs(torque,diff(diff(state_t,t),t),state_ddot);
 torque = transpose(simplify(subs(torque,[state_t,diff(state_t,t)],[state,state_dot])));
-
+disp('After torque')
+toc
 M = [
 simplify(torque - subs(torque,state_ddot(1),0)),...
 simplify(torque - subs(torque,state_ddot(2),0)),...
@@ -104,26 +108,21 @@ simplify(torque - subs(torque,state_ddot(5),0)),...
 simplify(torque - subs(torque,state_ddot(6),0)),...
 simplify(torque - subs(torque,state_ddot(7),0))];
 
-M = subs(M,state_ddot,[1,1,1,1,1,1,1])
-
-C = [
-simplify(torque - subs(torque,state_dot(1),0)),...
-simplify(torque - subs(torque,state_dot(2),0)),...
-simplify(torque - subs(torque,state_dot(3),0)),...
-simplify(torque - subs(torque,state_dot(4),0)),...
-simplify(torque - subs(torque,state_dot(5),0)),...
-simplify(torque - subs(torque,state_dot(6),0)),...
-simplify(torque - subs(torque,state_dot(7),0))];
-
-C = subs(C,state_dot,[1,1,1,1,1,1,1])
-
-G = subs(torque,[state_dot,state_ddot],[0,0,0,0,0,0,0, 0,0,0,0,0,0,0])
+m = subs(M,state_ddot,[1,1,1,1,1,1,1]);
 
 
+G = subs(torque,[state_dot,state_ddot],[0,0,0,0,0,0,0, 0,0,0,0,0,0,0]);
 
-%BattleBotODE(t,[state_pos,state_vel])
+c = simplify(torque - m* transpose(state_ddot) - G);
 
+global m_matrix cqdot_matrix g_matrix robot_transform
+m_matrix = matlabFunction(m);%magic function I needed the whole time
+cqdot_matrix = matlabFunction(c);
+g_matrix = matlabFunction(G);
+robot_transform = matlabFunction(world_to_robot);
 
+disp('After matlab function')
+toc
 
 %Visualiziation setup
 global chassis
@@ -145,30 +144,81 @@ right_wheel = [[0,chassis_width/2,0,1];...%center
               [0,chassis_width/2,0,1]]; %center
 wheel_points = subs(world_to_robot * transpose([left_wheel;right_wheel]),state,state_pos);
 
-%visualize([state_pos,state_vel]);
+
+tf = 5;
+
+[T,X] = ode45(@(t,x)BattleBotODE(t,x),[0 tf],[state_pos,state_vel]);
+disp('After ODE')
+toc
+
+figure('Name','Positions red is x');
+plot(T, X(:,1),'r-');
+hold on
+plot(T, X(:,2),'b-');
+hold on
+plot(T, X(:,3),'g-');
+hold on
+
+figure('Name','Angles red is yaw');
+plot(T, mod(X(:,6),2*pi),'r-');
+hold on
+plot(T, mod(X(:,5),2*pi),'b-');
+hold on
+plot(T, mod(X(:,4),2*pi),'g-');
+hold on
+
+figure('Name','Visualize robot');
+
+visualize_bot([state_pos,state_vel]);
 
 
 %% Definging Functions
 
     function dx = BattleBotODE(t,x)
-        global state
-        global jacob_chassis
-        global world_to_robot
-        global left_wheel right_wheel
-
 
         state_pos = x(1:7);
         state_vel = x(8:14);
-    
-        wheel_points = subs(world_to_robot * transpose([left_wheel;right_wheel]),state,state_pos);
+        %x y z roll pitch yaw
+        global left_wheel right_wheel
+        global m_matrix cqdot_matrix g_matrix robot_transform       
+        world_to_robot = robot_transform(state_pos(5),state_pos(4),state_pos(1),state_pos(2),state_pos(6),state_pos(3));
+        Mmat = m_matrix(state_pos(5),state_pos(4),state_pos(7),state_pos(6));
+        G_matrix = g_matrix(state_pos(5));
+        %(pitch,pitch_dot,roll,roll_dot,weapon_dot,weapon_location,yaw,yaw_dot)
+        cq = cqdot_matrix(state_pos(5),state_vel(5),state_pos(4),state_vel(4),...
+                          state_vel(7),state_pos(7),state_pos(6),state_vel(6));
         
-
-    
+        goal_vels = [0,0]; %left, right
+        wheel_points = world_to_robot * transpose([left_wheel;right_wheel]);
+        
+        before_tau = Mmat\(-cq - G_matrix );
+        
+        
+        offset = [0;0;0;0;0;0;0];
+        if(min(wheel_points(3,1:5)) > 0)
+            %left wheel off ground
+        else
+            %left wheel on ground
+            offset(3) = offset(3) - before_tau(3)/1.9;
+        end
+        if(min(wheel_points(3,6:10)) > 0)
+            %right wheel off ground
+        else
+            %right wheel on ground
+            offset(3) = offset(3) - before_tau(3)/1.9;
+        end
+        
+        
+        tau = [0;0;0;1;0;0;10000];
+        t
+        dx=zeros(14,1);
+        dx(1:7) = state_vel; 
+        dx(8:14) =   before_tau + Mmat\tau + offset;
     
     
     end
     
-    function visualize(x)
+    function visualize_bot(x)
         global state
         global world_to_robot robot_to_weapon wep_front_transform wep_back_transform
         global left_wheel right_wheel
