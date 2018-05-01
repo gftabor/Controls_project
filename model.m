@@ -51,7 +51,7 @@ third = [cos(yaw) -sin(yaw) 0;
     0 0 1];
 
 %%ZYX order
-matrix = third * second * first;
+matrix = third *second *   first;  %ditched pitch its annoying
 global world_to_robot robot_to_weapon wep_front_transform wep_back_transform
 world_to_robot = [[matrix;0,0,0],[x;y;z;1]];
 robot_to_weapon = [[transform(pi/2,0,0);0,0,0],[weapon_offset;0;0;1]];
@@ -142,10 +142,28 @@ right_wheel = [[0,chassis_width/2,0,1];...%center
               [0,chassis_width/2,-wheel_radius*cos(0),1];...%middle
               [wheel_radius*sin(wheel_angle),chassis_width/2,-wheel_radius*cos(wheel_angle),1];...%backward
               [0,chassis_width/2,0,1]]; %center
-wheel_points = subs(world_to_robot * transpose([left_wheel;right_wheel]),state,state_pos);
+%wheel_points = subs(world_to_robot * transpose([left_wheel;right_wheel]),state,state_pos);
 
+wheel_points = world_to_robot * transpose([left_wheel;right_wheel]);
 
-tf = 5;
+left_point = wheel_points(1:3,3);
+right_point = wheel_points(1:3,8);
+left_point_vel = jacobian(left_point,state) * transpose(state_dot)
+left_z_vel = left_point_vel(3)
+right_point_vel = jacobian(right_point,state) * transpose(state_dot)
+right_z_vel = right_point_vel(3)
+
+global right_compute left_compute z_dot_compute roll_dot_compute
+right_compute = matlabFunction(right_z_vel)
+left_compute = matlabFunction(left_z_vel)
+
+syms left_vel right_vel
+solution = solve([left_vel == left_z_vel,right_vel == right_z_vel],[z_dot,roll_dot])
+
+z_dot_compute = matlabFunction(solution.z_dot)
+roll_dot_compute = matlabFunction(solution.roll_dot)
+
+tf = 1;
 
 [T,X] = ode45(@(t,x)BattleBotODE(t,x),[0 tf],[state_pos,state_vel]);
 disp('After ODE')
@@ -184,7 +202,7 @@ visualize_bot([state_pos,state_vel]);
         world_to_robot = robot_transform(state_pos(5),state_pos(4),state_pos(1),state_pos(2),state_pos(6),state_pos(3));
         Mmat = m_matrix(state_pos(5),state_pos(4),state_pos(7),state_pos(6));
         G_matrix = g_matrix(state_pos(5));
-        %(pitch,pitch_dot,roll,roll_dot,weapon_dot,weapon_location,yaw,yaw_dot)
+        %(roll,roll_dot,weapon_dot,weapon_location,yaw,yaw_dot)
         cq = cqdot_matrix(state_pos(5),state_vel(5),state_pos(4),state_vel(4),...
                           state_vel(7),state_pos(7),state_pos(6),state_vel(6));
         
@@ -193,31 +211,62 @@ visualize_bot([state_pos,state_vel]);
         
         before_tau = Mmat\(-cq - G_matrix );
         
-        
+        global right_compute left_compute z_dot_compute roll_dot_compute
         offset = [0;0;0;0;0;0;0];
+
+        l_vel = left_compute(x(5),x(12),x(4),x(11),x(10));
+        r_vel = right_compute(x(5),x(12),x(4),x(11),x(10));
+         
+
+        [straight, turn, weapon] = control(state_pos,state_vel,t);
+        straight_real = 0;
+        turn_real = 0;
+
         if(min(wheel_points(3,1:5)) > 0)
             %left wheel off ground
         else
             %left wheel on ground
+            straight_real = straight_real + straight/2;
+            turn_real = turn_real + turn/2;
             offset(3) = offset(3) - before_tau(3)/1.9;
+            l_vel = 0 + min(wheel_points(3,1:5))*100;%stop moving it
         end
         if(min(wheel_points(3,6:10)) > 0)
             %right wheel off ground
+
         else
             %right wheel on ground
+            straight_real = straight_real + straight/2;
+            turn_real = turn_real + turn/2;
             offset(3) = offset(3) - before_tau(3)/1.9;
+            r_vel = 0 + min(wheel_points(3,6:10))*100; %stop moving it
         end
+        tau = [cos(state_pos(6)) * straight_real ;sin(state_pos(6)) * straight_real;...
+            0;0;0;turn_real;weapon];
+        z_dot = z_dot_compute(l_vel,x(5),x(12),r_vel,x(4));
+        roll_dot = roll_dot_compute(l_vel,x(5),x(12),r_vel,x(4));
         
-        
-        tau = [0;0;0;1;0;0;10000];
         t
         dx=zeros(14,1);
         dx(1:7) = state_vel; 
-        dx(8:14) =   before_tau + Mmat\tau + offset;
-    
-    
+        dx(8:14) =   before_tau + Mmat\tau ;%+ offset;
+        dx(10) = z_dot;
+        dx(11) = roll_dot;
+        dx(4) = 0;
+        dx(11) = 0;
     end
-    
+    function [straight, turn, weapon] = control(state,dstate,t)       
+        weapon = 0;
+        turn = 0;
+        straight = 0;
+        if(dstate(7) < 1000)
+            weapon = 200;
+        end
+        if(dstate(6) < 0.5)
+            turn = 10;
+
+        end    
+    end
     function visualize_bot(x)
         global state
         global world_to_robot robot_to_weapon wep_front_transform wep_back_transform
