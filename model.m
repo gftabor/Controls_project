@@ -74,9 +74,8 @@ jacob_weapon_back = jacobian(wep_back_transform * [0;0;0;1], state) ;
 
 jacob_chassis = jacobian(world_to_robot * [0;-0;0;1], state);
 
-state_pos = [1,0,wheel_radius, 0,0,0,   pi/2];
+state_pos = [1,0,wheel_radius+0.1, -0.3,0,0,   pi/2];
 state_vel = [0,0,0, 0,0,0,  0];
-t = 5;
 
 
 [k1,p1] = Dynamics(jacob_chassis,world_to_robot,chassis_mass,state_dot);
@@ -163,7 +162,7 @@ solution = solve([left_vel == left_z_vel,right_vel == right_z_vel],[z_dot,roll_d
 z_dot_compute = matlabFunction(solution.z_dot)
 roll_dot_compute = matlabFunction(solution.roll_dot)
 
-tf = 1;
+tf = 0.2;
 
 [T,X] = ode45(@(t,x)BattleBotODE(t,x),[0 tf],[state_pos,state_vel]);
 disp('After ODE')
@@ -185,9 +184,36 @@ hold on
 plot(T, mod(X(:,4),2*pi),'g-');
 hold on
 
-figure('Name','Visualize robot');
+frames_total = [];
+frames_used = [];
 
-visualize_bot([state_pos,state_vel]);
+ % create the video writer with 1 fps
+ writerObj = VideoWriter(char(string(now)+'.avi'));
+ writerObj.FrameRate = 3;
+ % set the seconds per image
+ % open the video writer
+ open(writerObj);
+ 
+for t = 1:size(T)
+   if(T(t,1)>0.01 )%&& mod(t,10) ==0)
+       frame = visualize_bot(X(t,:),t);
+       T(t,1)
+       res = size(frame.cdata);
+       frames_total = [frames_total;frame];
+        
+       whos __ writerObj frames_total frames_used
+       if(res(1) == 530 && res(2) == 510)
+          frames_used = [frames_used;frame];
+          writeVideo(writerObj, frame)
+       end
+       close all
+   end
+end
+
+ % close the writer object
+ close(writerObj);
+
+
 
 
 %% Definging Functions
@@ -233,7 +259,6 @@ visualize_bot([state_pos,state_vel]);
         end
         if(min(wheel_points(3,6:10)) > 0)
             %right wheel off ground
-
         else
             %right wheel on ground
             straight_real = straight_real + straight/2;
@@ -252,26 +277,28 @@ visualize_bot([state_pos,state_vel]);
         dx(8:14) =   before_tau + Mmat\tau ;%+ offset;
         dx(10) = z_dot;
         dx(11) = roll_dot;
-        dx(4) = 0;
-        dx(11) = 0;
+        dx(5) = 0;
+        dx(12) = 0;
     end
     function [straight, turn, weapon] = control(state,dstate,t)       
         weapon = 0;
         turn = 0;
         straight = 0;
         if(dstate(7) < 1000)
-            weapon = 200;
+            weapon = 200000;
         end
         if(dstate(6) < 0.5)
-            turn = 10;
+            turn = 100;
 
         end    
     end
-    function visualize_bot(x)
+    function frame = visualize_bot(x,t)
         global state
         global world_to_robot robot_to_weapon wep_front_transform wep_back_transform
         global left_wheel right_wheel
         global chassis
+
+        disp('start');
 
         state_pos = x(1:7);
         state_vel = x(8:14);
@@ -285,19 +312,31 @@ visualize_bot([state_pos,state_vel]);
         front_tip = subs(wep_front_transform * [0;0;0;1],state,state_pos);
         back_tip = subs(wep_back_transform * [0;0;0;1],state,state_pos);
         
-        
+        fig = figure('Name','Visualize robot ' + string(t),'position',[0, 0, 500, 500]);
+        disp('chassis');
+
         plot3([chassis_corners(1,:),chassis_corners(1,1)],[chassis_corners(2,:),chassis_corners(2,1)],[chassis_corners(3,:),chassis_corners(3,1)])
         hold on
         plot3([chassis_corners(1,4),weapon_point(1),chassis_corners(1,3)]...
             ,[chassis_corners(2,4),weapon_point(2),chassis_corners(2,3)],...
             [chassis_corners(3,4),weapon_point(3),chassis_corners(3,3)])
         hold on
-        weapon = [back_tip,front_tip];
-        plot3(weapon(1,:),weapon(2,:),weapon(3,:))
+        weapon = [back_tip,front_tip]
+        disp('weapon');
+        plot3(weapon(1,:),weapon(2,:),weapon(3,:));
+        disp('wheel');
         hold on
         plot3(wheel_points(1,:),wheel_points(2,:),wheel_points(3,:))
-        daspect([1 1 1])
-    
+        disp('limits');
+       % daspect([1 1 1])
+        xlim([-0.2 1.5])
+        ylim([-0.6 0.6])
+        zlim([0 0.5])
+        disp('pixels');
+        set(gca,'units','pixels','position',[0,0,500,500])
+        set(gcf,'units','pixels','position',[0,0,500,500])
+        disp('frame');
+        frame = getframe(fig);
     end
 
 
