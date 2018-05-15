@@ -74,7 +74,7 @@ jacob_weapon_back = jacobian(wep_back_transform * [0;0;0;1], state) ;
 
 jacob_chassis = jacobian(world_to_robot * [0;-0;0;1], state);
 
-state_pos = [1,0,wheel_radius+0.1, -0.3,0,0,   pi/2];
+state_pos = [1,0,wheel_radius+0.5, -0.3,0,0,   pi/2];
 state_vel = [0,0,0, 0,0,0,  0];
 
 
@@ -84,7 +84,6 @@ state_vel = [0,0,0, 0,0,0,  0];
 
 disp('After energy')
 toc
-
 Lagrange = simplify(k1 + k2 + k3 - p1 -p2 - p3);
 
 syms x_t(t) y_t(t) z_t(t) roll_t(t) pitch_t(t) yaw_t(t) weapon_location_t(t)
@@ -95,7 +94,7 @@ Lagrange_dstate_dot = jacobian(Lagrange,state_dot);
 torque = diff(subs(Lagrange_dstate_dot,[state,state_dot],[state_t,diff(state_t,t)])) -...
               subs(Lagrange_dstate,[state,state_dot],[state_t,diff(state_t,t)]);
 torque = subs(torque,diff(diff(state_t,t),t),state_ddot);
-torque = transpose(simplify(subs(torque,[state_t,diff(state_t,t)],[state,state_dot])));
+torque = transpose(simplify(subs(torque,[state_t,diff(state_t,t)],[state,state_dot])))
 disp('After torque')
 toc
 M = [
@@ -162,11 +161,12 @@ solution = solve([left_vel == left_z_vel,right_vel == right_z_vel],[z_dot,roll_d
 z_dot_compute = matlabFunction(solution.z_dot)
 roll_dot_compute = matlabFunction(solution.roll_dot)
 
-tf = 0.2;
+tf = 1;
 
 [T,X] = ode45(@(t,x)BattleBotODE(t,x),[0 tf],[state_pos,state_vel]);
 disp('After ODE')
 toc
+frame = visualize_bot([state_pos,state_vel],0);
 
 figure('Name','Positions red is x');
 plot(T, X(:,1),'r-');
@@ -192,26 +192,32 @@ frames_used = [];
  writerObj.FrameRate = 3;
  % set the seconds per image
  % open the video writer
- open(writerObj);
  
-for t = 1:size(T)
-   if(T(t,1)>0.01 )%&& mod(t,10) ==0)
-       frame = visualize_bot(X(t,:),t);
-       T(t,1)
-       res = size(frame.cdata);
-       frames_total = [frames_total;frame];
-        
-       whos __ writerObj frames_total frames_used
-       if(res(1) == 530 && res(2) == 510)
-          frames_used = [frames_used;frame];
-          writeVideo(writerObj, frame)
-       end
-       close all
-   end
-end
+ 
+ video = false;
+ if video
+     open(writerObj);
 
- % close the writer object
- close(writerObj);
+    for t = 1:size(T)
+       if(T(t,1)>0.01 )%&& mod(t,10) ==0)
+           frame = visualize_bot(X(t,:),t);
+           T(t,1)
+           res = size(frame.cdata);
+           frames_total = [frames_total;frame];
+
+           whos __ writerObj frames_total frames_used
+           if(res(1) == 530 && res(2) == 510)
+              frames_used = [frames_used;frame];
+              writeVideo(writerObj, frame)
+           end
+           close all
+       end
+    end
+
+     % close the writer object
+     close(writerObj);
+ end
+ 
 
 
 
@@ -231,9 +237,7 @@ end
         %(roll,roll_dot,weapon_dot,weapon_location,yaw,yaw_dot)
         cq = cqdot_matrix(state_pos(5),state_vel(5),state_pos(4),state_vel(4),...
                           state_vel(7),state_pos(7),state_pos(6),state_vel(6));
-        
-        goal_vels = [0,0]; %left, right
-        wheel_points = world_to_robot * transpose([left_wheel;right_wheel]);
+                wheel_points = world_to_robot * transpose([left_wheel;right_wheel]);
         
         before_tau = Mmat\(-cq - G_matrix );
         
@@ -260,6 +264,7 @@ end
         if(min(wheel_points(3,6:10)) > 0)
             %right wheel off ground
         else
+            min(wheel_points(3,6:10))
             %right wheel on ground
             straight_real = straight_real + straight/2;
             turn_real = turn_real + turn/2;
@@ -271,7 +276,6 @@ end
         z_dot = z_dot_compute(l_vel,x(5),x(12),r_vel,x(4));
         roll_dot = roll_dot_compute(l_vel,x(5),x(12),r_vel,x(4));
         
-        t
         dx=zeros(14,1);
         dx(1:7) = state_vel; 
         dx(8:14) =   before_tau + Mmat\tau ;%+ offset;
@@ -287,7 +291,7 @@ end
         if(dstate(7) < 1000)
             weapon = 200000;
         end
-        if(dstate(6) < 0.5)
+        if(dstate(6) < 5)
             turn = 100;
 
         end    
@@ -298,7 +302,6 @@ end
         global left_wheel right_wheel
         global chassis
 
-        disp('start');
 
         state_pos = x(1:7);
         state_vel = x(8:14);
@@ -313,7 +316,6 @@ end
         back_tip = subs(wep_back_transform * [0;0;0;1],state,state_pos);
         
         fig = figure('Name','Visualize robot ' + string(t),'position',[0, 0, 500, 500]);
-        disp('chassis');
 
         plot3([chassis_corners(1,:),chassis_corners(1,1)],[chassis_corners(2,:),chassis_corners(2,1)],[chassis_corners(3,:),chassis_corners(3,1)])
         hold on
@@ -321,21 +323,17 @@ end
             ,[chassis_corners(2,4),weapon_point(2),chassis_corners(2,3)],...
             [chassis_corners(3,4),weapon_point(3),chassis_corners(3,3)])
         hold on
-        weapon = [back_tip,front_tip]
+        weapon = [back_tip,front_tip];
         disp('weapon');
         plot3(weapon(1,:),weapon(2,:),weapon(3,:));
-        disp('wheel');
         hold on
         plot3(wheel_points(1,:),wheel_points(2,:),wheel_points(3,:))
-        disp('limits');
        % daspect([1 1 1])
         xlim([-0.2 1.5])
         ylim([-0.6 0.6])
-        zlim([0 0.5])
-        disp('pixels');
+        zlim([0 0.9])
         set(gca,'units','pixels','position',[0,0,500,500])
         set(gcf,'units','pixels','position',[0,0,500,500])
-        disp('frame');
         frame = getframe(fig);
     end
 
